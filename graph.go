@@ -17,8 +17,8 @@ type Farm struct {
 	EndRoom   string
 }
 
-// NewFarm initialises an empty Farm.
-func NewFarm() *Farm {
+// NewFarm initialises an empty Farm. 
+func NewFarm() *Farm { // Initialize the maps to avoid nil map assignment errors later on.
 	return &Farm{
 		Rooms:   make(map[string]*Room),
 		Tunnels: make(map[string][]string),
