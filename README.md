@@ -2,6 +2,7 @@
 
 A Go program that solves an ant colony pathfinding problem. Parses a graph of rooms and tunnels, finds optimal non-overlapping paths using BFS-based max flow, and moves N ants from `##start` to `##end` in the fewest turns possible.
 
+---
 
 ## Table of Contents
 
@@ -15,6 +16,7 @@ A Go program that solves an ant colony pathfinding problem. Parses a graph of ro
 - [Error Handling](#error-handling)
 - [Testing](#testing)
 
+---
 
 ## Overview
 
@@ -25,6 +27,7 @@ Rules:
 - Each tunnel can only be used **once per turn**
 - All ants begin in `##start` and must reach `##end`
 
+---
 
 ## Algorithm
 
@@ -63,22 +66,23 @@ It selects the path set that **minimises total turns**, then distributes ants gr
 | Distribute ants | Greedy assignment |
 | Simulate movement | Turn-by-turn queue |
 
+---
 
 ## Project Structure
 
-> ⚠️ This section will be updated as the codebase grows.
-
 ```
 lem-in/
-├── main.go          // Entry point
-├── parser.go        // Input parsing and validation
-├── graph.go         // Room and tunnel data structures
-├── pathfinder.go    // BFS + augmenting paths
-├── solver.go        // Ant distribution and turn optimisation
-├── simulator.go     // Turn-by-turn movement output
-└── *_test.go        // Unit tests
+├── main.go            // Entry point
+├── graph.go           // Room and tunnel data structures ✅
+├── graph_test.go      // Unit tests for graph ✅
+├── parser.go          // Input parsing and validation ✅
+├── parser_test.go     // Unit tests for parser ✅
+├── pathfinder.go      // BFS + augmenting paths
+├── solver.go          // Ant distribution and turn optimisation
+└── simulator.go       // Turn-by-turn movement output
 ```
 
+---
 
 ## Input Format
 
@@ -104,6 +108,7 @@ name1-name2
 - Lines beginning with `#` (but not `##start` or `##end`) are treated as comments
 - `##start` and `##end` are the only valid special commands
 
+---
 
 ## Output Format
 
@@ -121,6 +126,7 @@ L1-roomC L2-roomA L3-roomB
 
 Where `Lx-y` means ant number `x` moved to room `y`.
 
+---
 
 ## Usage
 
@@ -134,6 +140,7 @@ Example:
 $ go run . example00.txt
 ```
 
+---
 
 ## Examples
 
@@ -157,6 +164,7 @@ L4-1
 
 Expected: **6 turns or fewer**
 
+---
 
 ## Error Handling
 
@@ -166,25 +174,51 @@ The program returns a descriptive error to stdout for all invalid inputs:
 ERROR: invalid data format
 ```
 
-Or more specifically:
+With specific messages for each case:
 
 ```
 ERROR: invalid data format, invalid number of ants
 ERROR: invalid data format, no start room found
 ERROR: invalid data format, no end room found
-ERROR: invalid data format, duplicate room
-ERROR: invalid data format, unknown room in link
+ERROR: invalid data format, multiple start rooms found
+ERROR: invalid data format, multiple end rooms found
+ERROR: invalid data format, duplicate room: <name>
+ERROR: invalid data format, unknown room in link: <name>
+ERROR: invalid data format, invalid room name: <name>
+ERROR: invalid data format, invalid coordinates for room: <name>
+ERROR: invalid data format, invalid tunnel format: <tunnel>
+ERROR: invalid data format, ##start declared but no room followed
+ERROR: invalid data format, ##end declared but no room followed
+ERROR: invalid data format, no tunnels found
+ERROR: invalid data format, file is empty
+ERROR: invalid data format, path is a directory not a file
+ERROR: invalid data format, could not open file
+ERROR: invalid data format, file read error
 ```
 
+---
 
 ## Testing
-
-> ⚠️ Unit tests will be added as each module is implemented.
 
 ```bash
 $ go test ./...
 ```
 
+To see each test name:
+
+```bash
+$ go test -v ./...
+```
+
+| File | Tests | Status |
+|------|-------|--------|
+| `graph_test.go` | 8 | ✅ All passing |
+| `parser_test.go` | 20 | ✅ All passing |
+| `pathfinder_test.go` | — | ⏳ Pending |
+| `solver_test.go` | — | ⏳ Pending |
+| `simulator_test.go` | — | ⏳ Pending |
+
+---
 
 ## Constraints
 
