@@ -6,16 +6,12 @@ type Move struct {
 	Room  string
 }
 
-// AssignAnts distributes ants across the given paths.
-// Returns a slice where each index i contains the ant number assigned to path i.
-// Ants are assigned one per path in round-robin order.
+// assignAnts distributes ants across the given paths.
+// Ants are assigned greedily to whichever path would finish soonest.
 func assignAnts(paths [][]string, numAnts int) [][]int {
 	assignments := make([][]int, len(paths))
 
-	// Assign ants to paths based on which path will finish soonest
-	antID := 1
-	for antID <= numAnts {
-		// Pick the path that would finish the earliest if we added one more ant
+	for antID := 1; antID <= numAnts; antID++ {
 		bestPath := 0
 		bestTurns := turnsForPath(paths[0], len(assignments[0])+1)
 
@@ -27,64 +23,62 @@ func assignAnts(paths [][]string, numAnts int) [][]int {
 			}
 		}
 		assignments[bestPath] = append(assignments[bestPath], antID)
-		antID++
 	}
 
 	return assignments
 }
 
-// turnsForPath calculates how many turns a path would take given it carries a certain number of ants sequentially.
+// turnsForPath calculates how many turns a path would take
+// given it carries a certain number of ants sequentially.
 func turnsForPath(path []string, numAnts int) int {
 	steps := len(path) - 1
 	return steps + numAnts - 1
 }
 
-// Simulate generates all the turn-by-turn moves for the ants.
-// Returns a slice of turns, each turn being a slice of Move.
+// simulate generates all the turn-by-turn moves for the ants.
+// Each ant at position antPos in its path queue departs on turn antPos
+// (zero-indexed), moving one step per turn after that.
 func simulate(paths [][]string, assignments [][]int) [][]Move {
 	turns := [][]Move{}
 
-	// Track each ant's current position along its path
-	// antProgress[antID] = current step index along its path
 	type antState struct {
-		pathIndex int
-		step      int
+		step int // current step index along its path (0 = still at start)
 	}
 
-	// Build a map of antID -> its path and current step
+	// Map antID -> its path and state
 	antStates := map[int]*antState{}
 	antPath := map[int][]string{}
+	// antDepart[antID] = which turn (0-indexed) the ant is allowed to depart
+	antDepart := map[int]int{}
 
 	for pathIdx, ants := range assignments {
-		for _, antID := range ants {
-			antStates[antID] = &antState{pathIndex: pathIdx, step: 0}
+		for antPos, antID := range ants {
+			antStates[antID] = &antState{step: 0}
 			antPath[antID] = paths[pathIdx]
+			// Each ant on the same path departs one turn after the previous
+			antDepart[antID] = antPos
 		}
 	}
 
-	// Run simulation until all ants have reached the end
+	turnIndex := 0
 	for {
 		turnMoves := []Move{}
 
-		for pathIdx, ants := range assignments {
-			for antPos, antID := range ants {
+		for _, ants := range assignments {
+			for _, antID := range ants {
 				state := antStates[antID]
 				path := antPath[antID]
 
-				// An ant can only move if the next room is free
-				// Ants on the same path are spaced one step apart
-				// Ant at position antPos can move on turn: antPos + step
-				nextStep := state.step + 1
-
-				// Check if the ant can move to the next step
-				if nextStep <= antPos+len(turns) && nextStep < len(path) {
-					state.step = nextStep
+				// Ant can only move if:
+				// 1. The current turn is >= its departure turn
+				// 2. It has not yet reached the end of its path
+				if turnIndex >= antDepart[antID] && state.step < len(path)-1 {
+					state.step++
 					turnMoves = append(turnMoves, Move{
 						AntID: antID,
-						Room:  path[nextStep],
+						Room:  path[state.step],
 					})
 				}
-				_ = pathIdx
 			}
 		}
 
@@ -93,6 +87,7 @@ func simulate(paths [][]string, assignments [][]int) [][]Move {
 		}
 
 		turns = append(turns, turnMoves)
+		turnIndex++
 	}
 
 	return turns
