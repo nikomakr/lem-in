@@ -2,6 +2,7 @@
 
 A Go program that solves an ant colony pathfinding problem. Parses a graph of rooms and tunnels, finds optimal non-overlapping paths using BFS-based max flow, and moves N ants from `##start` to `##end` in the fewest turns possible.
 
+---
 
 ## Table of Contents
 
@@ -15,6 +16,7 @@ A Go program that solves an ant colony pathfinding problem. Parses a graph of ro
 - [Error Handling](#error-handling)
 - [Testing](#testing)
 
+---
 
 ## Overview
 
@@ -25,6 +27,7 @@ Rules:
 - Each tunnel can only be used **once per turn**
 - All ants begin in `##start` and must reach `##end`
 
+---
 
 ## Algorithm
 
@@ -63,6 +66,7 @@ It selects the path set that **minimises total turns**, then distributes ants gr
 | Distribute ants | Greedy assignment |
 | Simulate movement | Turn-by-turn queue |
 
+---
 
 ## Project Structure
 
@@ -75,10 +79,13 @@ lem-in/
 ├── parser_test.go     // Unit tests for parser ✅
 ├── pathfinder.go      // BFS + augmenting paths ✅
 ├── pathfinder_test.go // Unit tests for pathfinder ✅
-├── solver.go          // Ant distribution and turn optimisation
-└── simulator.go       // Turn-by-turn movement output
+├── solver.go          // Ant distribution and turn optimisation ✅
+├── solver_test.go     // Unit tests for solver ✅
+├── simulator.go       // Turn-by-turn movement output ✅
+└── simulator_test.go  // Unit tests for simulator ✅
 ```
 
+---
 
 ## Input Format
 
@@ -104,6 +111,7 @@ name1-name2
 - Lines beginning with `#` (but not `##start` or `##end`) are treated as comments
 - `##start` and `##end` are the only valid special commands
 
+---
 
 ## Output Format
 
@@ -121,6 +129,7 @@ L1-roomC L2-roomA L3-roomB
 
 Where `Lx-y` means ant number `x` moved to room `y`.
 
+---
 
 ## Usage
 
@@ -134,6 +143,7 @@ Example:
 $ go run . example00.txt
 ```
 
+---
 
 ## Examples
 
@@ -157,6 +167,7 @@ L4-1
 
 Expected: **6 turns or fewer**
 
+---
 
 ## Error Handling
 
@@ -188,6 +199,7 @@ ERROR: invalid data format, could not open file
 ERROR: invalid data format, file read error
 ```
 
+---
 
 ## Testing
 
@@ -206,9 +218,10 @@ $ go test -v ./...
 | `graph_test.go` | 8 | ✅ All passing |
 | `parser_test.go` | 20 | ✅ All passing |
 | `pathfinder_test.go` | 11 | ✅ All passing |
-| `solver_test.go` | — | ⏳ Pending |
-| `simulator_test.go` | — | ⏳ Pending |
+| `solver_test.go` | 9 | ✅ All passing |
+| `simulator_test.go` | 8 | ✅ All passing |
 
+---
 
 ## Constraints
 
