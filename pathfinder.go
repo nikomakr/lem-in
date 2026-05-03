@@ -1,132 +1,231 @@
 package main
 
-// findPaths uses an Edmonds-Karp / BFS-based max flow approach to find
-// the optimal set of non-overlapping paths from start to end.
-// It returns the best subset of paths that minimises total turns for N ants.
-func findPaths(farm *Farm) [][]string {
-	// Build a capacity graph from the farm's list.
-	// capacity[a][b] = 1 means the edge a->b is available.
-	// capacity[a][b] = 0 means it is used.
-	capacity := buildCapacityGraph(farm)
+import "sort"
 
-	// Find all paths using BFS (Edmonds-Karp)
-	allPaths := [][]string{}
+// findPaths uses Edmonds-Karp with node splitting to find
+// the optimal set of non-overlapping paths from start to end.
+func findPaths(farm *Farm) [][]string {
+	initial := buildCapacityGraph(farm)
+	capacity := cloneGraph(initial)
+
+	foundAny := false
 	for {
-		path := bfs(farm.StartRoom, farm.EndRoom, capacity)
+		path := bfsCapacity(farm.StartRoom+"_in", farm.EndRoom+"_out", capacity)
 		if path == nil {
 			break
 		}
-		allPaths = append(allPaths, path)
-
-		// Update capacity along the found path:
-		// - Reduce forward edge capacity to 0 (mark as used)
-		// - Increase reverse edge capacity to 1 (allow undoing)
+		foundAny = true
 		for i := 0; i < len(path)-1; i++ {
-			from := path[i]
-			to := path[i+1]
-			capacity[from][to]--
-			capacity[to][from]++
+			capacity[path[i]][path[i+1]]--
+			capacity[path[i+1]][path[i]]++
 		}
 	}
-
-	if len(allPaths) == 0 {
+	if !foundAny {
 		return nil
 	}
 
-	// Select the optimal subset of paths that minimises turns for N ants
-	return selectBestPaths(allPaths, farm.Ants)
+	realPaths := decomposeFlow(initial, capacity, farm.StartRoom, farm.EndRoom)
+	if len(realPaths) == 0 {
+		return nil
+	}
+	return selectBestPaths(realPaths, farm.Ants)
 }
 
-// buildCapacityGraph creates a capacity map from the farm's tunnel list.
-// Each undirected tunnel becomes two directed edges each with capacity 1.
-// undirected edge a<->b becomes capacity[a][b] = 1 and capacity[b][a] = 1.
-func buildCapacityGraph(farm *Farm) map[string]map[string]int {
-	capacity := make(map[string]map[string]int)
-
-	for room := range farm.Rooms {
-		capacity[room] = make(map[string]int)
-	}
-
-	for from, neighbours := range farm.Tunnels {
-		for _, to := range neighbours {
-			capacity[from][to] = 1
+// cloneGraph returns a deep copy of a capacity graph.
+func cloneGraph(g map[string]map[string]int) map[string]map[string]int {
+	clone := make(map[string]map[string]int, len(g))
+	for u, neighbors := range g {
+		clone[u] = make(map[string]int, len(neighbors))
+		for v, c := range neighbors {
+			clone[u][v] = c
 		}
 	}
-
-	return capacity
+	return clone
 }
 
-// bfs performs a breadth-first search from start to end using available capacity.
-// Returns the shortest path as a slice of room names, or nil if no path exists.
-func bfs(start, end string, capacity map[string]map[string]int) []string {
-	// Each element in the queue is a path (slice of room names)
-	queue := [][]string{{start}}
-	visited := map[string]bool{start: true}
-
-	for len(queue) > 0 {
-		// Dequeue the first path
-		current := queue[0]
-		queue = queue[1:]
-
-		// The last room in the current path
-		room := current[len(current)-1]
-
-		if room == end {
-			return current // found a path to the end
-		}
-
-		// Explore all neighbours with available capacity
-		for neighbour, cap := range capacity[room] {
-			if cap > 0 && !visited[neighbour] { 
-				visited[neighbour] = true 
-				// Build a new path by copying current and appending neighbour
-				newPath := make([]string, len(current)+1)
-				copy(newPath, current)
-				newPath[len(current)] = neighbour
-				queue = append(queue, newPath)
+// decomposeFlow extracts individual flow paths from the max-flow result.
+// flow(u→v) = initial[u][v] - final[u][v]; we DFS through edges with flow > 0.
+func decomposeFlow(initial, final map[string]map[string]int, startRoom, endRoom string) [][]string {
+	flowGraph := make(map[string]map[string]int)
+	for u, neighbors := range initial {
+		for v, initCap := range neighbors {
+			f := initCap - final[u][v]
+			if f > 0 {
+				if flowGraph[u] == nil {
+					flowGraph[u] = make(map[string]int)
+				}
+				flowGraph[u][v] = f
 			}
 		}
 	}
 
-	return nil // no path found
+	startNode := startRoom + "_in"
+	endNode := endRoom + "_out"
+	paths := [][]string{}
+
+	for {
+		path := bfsFlow(startNode, endNode, flowGraph)
+		if path == nil {
+			break
+		}
+		paths = append(paths, toRealPath(path))
+		for i := 0; i < len(path)-1; i++ {
+			flowGraph[path[i]][path[i+1]]--
+			if flowGraph[path[i]][path[i+1]] == 0 {
+				delete(flowGraph[path[i]], path[i+1])
+			}
+		}
+	}
+	return paths
 }
 
-// calculateTurns returns the number of turns needed to move numAnts ants through a given set of paths.
-// Formula: longest path length + (numAnts - numPaths)
-// This assumes ants are distributed optimally across paths.
+// bfsFlow finds a path in the flow graph (only forward/flow edges).
+func bfsFlow(start, end string, flow map[string]map[string]int) []string {
+	parent := map[string]string{start: ""}
+	queue := []string{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == end {
+			path := []string{}
+			for node := end; node != ""; node = parent[node] {
+				path = append([]string{node}, path...)
+			}
+			return path
+		}
+		for neighbor, f := range flow[current] {
+			if f > 0 {
+				if _, visited := parent[neighbor]; !visited {
+					parent[neighbor] = current
+					queue = append(queue, neighbor)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// buildCapacityGraph builds a residual capacity graph using node splitting.
+// Each room X becomes X_in and X_out with an internal edge.
+// Start and end get capacity equal to their tunnel count.
+// All other rooms get internal capacity 1.
+func buildCapacityGraph(farm *Farm) map[string]map[string]int {
+	cap := make(map[string]map[string]int)
+
+	ensure := func(node string) {
+		if cap[node] == nil {
+			cap[node] = make(map[string]int)
+		}
+	}
+
+	for room := range farm.Rooms {
+		in := room + "_in"
+		out := room + "_out"
+		ensure(in)
+		ensure(out)
+
+		if room == farm.StartRoom || room == farm.EndRoom {
+			cap[in][out] = len(farm.Tunnels[room])
+		} else {
+			cap[in][out] = 1
+		}
+		cap[out][in] = 0
+	}
+
+	for from, neighbours := range farm.Tunnels {
+		for _, to := range neighbours {
+			fromOut := from + "_out"
+			toIn := to + "_in"
+			ensure(fromOut)
+			ensure(toIn)
+			cap[fromOut][toIn] = 1
+			if _, exists := cap[toIn][fromOut]; !exists {
+				cap[toIn][fromOut] = 0
+			}
+		}
+	}
+
+	return cap
+}
+
+// bfsCapacity finds the shortest augmenting path using parent tracking BFS.
+func bfsCapacity(start, end string, capacity map[string]map[string]int) []string {
+	parent := map[string]string{start: ""}
+	queue := []string{start}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current == end {
+			path := []string{}
+			for node := end; node != ""; node = parent[node] {
+				path = append([]string{node}, path...)
+			}
+			return path
+		}
+
+		for neighbour, c := range capacity[current] {
+			if c > 0 {
+				if _, visited := parent[neighbour]; !visited {
+					parent[neighbour] = current
+					queue = append(queue, neighbour)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// toRealPath reconstructs real room names from a flow-decomposition path.
+// Every room appears as X_in then X_out; we collect from _in nodes only.
+func toRealPath(path []string) []string {
+	result := []string{}
+	for _, node := range path {
+		if len(node) > 3 && node[len(node)-3:] == "_in" {
+			result = append(result, node[:len(node)-3])
+		}
+	}
+	return result
+}
+
+// calculateTurns returns the number of turns needed to move numAnts ants
+// through a given set of paths.
 func calculateTurns(paths [][]string, numAnts int) int {
 	if len(paths) == 0 {
 		return 0
 	}
 	longest := 0
 	for _, p := range paths {
-		// Path length = number of steps = number of rooms - 1
 		steps := len(p) - 1
 		if steps > longest {
-			longest = steps 
+			longest = steps
 		}
 	}
-	return longest + (numAnts - len(paths)) // Extra turns for ants waiting to enter paths
+	return longest + (numAnts - len(paths))
 }
 
-// SelectBestPaths evaluates each prefix of allPaths (1 path, 2 paths, 3 paths...) and returns the subset that produces the fewest turns for numAnts ants.
-// Adding more paths is only beneficial up to a point — beyond that, the longer path length outweighs the benefit of parallelism.
+// selectBestPaths returns the subset of paths that minimises total turns.
+// Paths are sorted shortest-first before selection so prefix-comparison is valid.
 func selectBestPaths(allPaths [][]string, numAnts int) [][]string {
-	bestTurns := -1 // bestTurns = -1 means we haven't found any valid configuration yet
-	bestCount := 1 // bestCount = 1 means we start by considering just the first path
+	sort.Slice(allPaths, func(i, j int) bool {
+		return len(allPaths[i]) < len(allPaths[j])
+	})
+
+	bestTurns := -1
+	bestCount := 1
 
 	for i := 1; i <= len(allPaths); i++ {
-		// Only consider paths where we have at least one ant per path
 		if i > numAnts {
 			break
 		}
 		turns := calculateTurns(allPaths[:i], numAnts)
-		// We want to minimize turns, so we update bestTurns and bestCount when we find a better configuration
 		if bestTurns == -1 || turns < bestTurns {
 			bestTurns = turns
 			bestCount = i
 		}
 	}
 
-	return allPaths[:bestCount] // Return the best subset of paths that minimizes turns
+	return allPaths[:bestCount]
 }
