@@ -8,31 +8,39 @@ import (
 	"strings"
 )
 
-// ParseFarm reads the input file and returns a populated Farm or an error.
-func ParseFarm(filename string) (*Farm, error) {
+// ParseFarm reads the input file and returns a populated Farm,
+// the original file content for output, and an error if any.
+func ParseFarm(filename string) (*Farm, string, error) {
 	// --- File-level validation ---
 	info, err := os.Stat(filename)
 	if err != nil {
-		return nil, fmt.Errorf("ERROR: invalid data format, could not open file")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, could not open file")
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("ERROR: invalid data format, path is a directory not a file")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, path is a directory not a file")
 	}
 	if info.Size() == 0 {
-		return nil, fmt.Errorf("ERROR: invalid data format, file is empty")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, file is empty")
 	}
+
+	// Read full file content for output later
+	fileBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, "", fmt.Errorf("ERROR: invalid data format, could not read file")
+	}
+	fileContent := string(fileBytes)
 
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("ERROR: invalid data format, could not open file: %v", err)
+		return nil, "", fmt.Errorf("ERROR: invalid data format, could not open file: %v", err)
 	}
 	defer file.Close()
 
 	farm := NewFarm()
 
-	// Increase scanner buffer to handle long lines (default is 64KB)
+	// Increase scanner buffer to handle long lines
 	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 1024*1024) // 1MB buffer
+	buf := make([]byte, 1024*1024)
 	scanner.Buffer(buf, 1024*1024)
 
 	antsParsed := false
@@ -53,14 +61,14 @@ func ParseFarm(filename string) (*Farm, error) {
 		// --- Ant count (must be the very first non-empty line) ---
 		if !antsParsed {
 			if strings.Contains(line, ".") {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid number of ants")
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid number of ants")
 			}
 			ants, err := strconv.Atoi(line)
 			if err != nil {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid number of ants")
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid number of ants")
 			}
 			if ants <= 0 {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid number of ants")
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid number of ants")
 			}
 			farm.Ants = ants
 			antsParsed = true
@@ -70,14 +78,14 @@ func ParseFarm(filename string) (*Farm, error) {
 		// --- Special commands ---
 		if line == "##start" {
 			if farm.StartRoom != "" {
-				return nil, fmt.Errorf("ERROR: invalid data format, multiple start rooms found")
+				return nil, "", fmt.Errorf("ERROR: invalid data format, multiple start rooms found")
 			}
 			nextIsStart = true
 			continue
 		}
 		if line == "##end" {
 			if farm.EndRoom != "" {
-				return nil, fmt.Errorf("ERROR: invalid data format, multiple end rooms found")
+				return nil, "", fmt.Errorf("ERROR: invalid data format, multiple end rooms found")
 			}
 			nextIsEnd = true
 			continue
@@ -94,21 +102,28 @@ func ParseFarm(filename string) (*Farm, error) {
 		}
 
 		if parsingLinks {
+			// Catch ##start or ##end declared but tunnel line follows before a room
+			if nextIsStart {
+				return nil, "", fmt.Errorf("ERROR: invalid data format, ##start declared but no room followed")
+			}
+			if nextIsEnd {
+				return nil, "", fmt.Errorf("ERROR: invalid data format, ##end declared but no room followed")
+			}
 			if !strings.Contains(line, "-") {
 				continue
 			}
 			parts := strings.Split(line, "-")
 			if len(parts) != 2 {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid tunnel format: %s", line)
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid tunnel format: %s", line)
 			}
 			if parts[0] == "" || parts[1] == "" {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid tunnel format: %s", line)
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid tunnel format: %s", line)
 			}
 			if _, ok := farm.Rooms[parts[0]]; !ok {
-				return nil, fmt.Errorf("ERROR: invalid data format, unknown room in link: %s", parts[0])
+				return nil, "", fmt.Errorf("ERROR: invalid data format, unknown room in link: %s", parts[0])
 			}
 			if _, ok := farm.Rooms[parts[1]]; !ok {
-				return nil, fmt.Errorf("ERROR: invalid data format, unknown room in link: %s", parts[1])
+				return nil, "", fmt.Errorf("ERROR: invalid data format, unknown room in link: %s", parts[1])
 			}
 			farm.AddTunnel(parts[0], parts[1])
 			continue
@@ -119,28 +134,30 @@ func ParseFarm(filename string) (*Farm, error) {
 
 		if len(parts) != 3 {
 			if nextIsStart {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid room definition after ##start: %s", line)
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid room definition after ##start: %s", line)
 			}
 			if nextIsEnd {
-				return nil, fmt.Errorf("ERROR: invalid data format, invalid room definition after ##end: %s", line)
+				return nil, "", fmt.Errorf("ERROR: invalid data format, invalid room definition after ##end: %s", line)
 			}
 			continue
 		}
 
 		name := parts[0]
 
+		// Room names must not start with 'L' or '#'
 		if strings.HasPrefix(name, "L") || strings.HasPrefix(name, "#") {
-			return nil, fmt.Errorf("ERROR: invalid data format, invalid room name: %s", name)
+			return nil, "", fmt.Errorf("ERROR: invalid data format, invalid room name: %s", name)
 		}
 
+		// Coordinates must be integers not floats
 		if strings.Contains(parts[1], ".") || strings.Contains(parts[2], ".") {
-			return nil, fmt.Errorf("ERROR: invalid data format, invalid coordinates for room: %s", name)
+			return nil, "", fmt.Errorf("ERROR: invalid data format, invalid coordinates for room: %s", name)
 		}
 
 		x, errX := strconv.Atoi(parts[1])
 		y, errY := strconv.Atoi(parts[2])
 		if errX != nil || errY != nil {
-			return nil, fmt.Errorf("ERROR: invalid data format, invalid coordinates for room: %s", name)
+			return nil, "", fmt.Errorf("ERROR: invalid data format, invalid coordinates for room: %s", name)
 		}
 
 		room := &Room{
@@ -152,7 +169,7 @@ func ParseFarm(filename string) (*Farm, error) {
 		}
 
 		if !farm.AddRoom(room) {
-			return nil, fmt.Errorf("ERROR: invalid data format, duplicate room: %s", name)
+			return nil, "", fmt.Errorf("ERROR: invalid data format, duplicate room: %s", name)
 		}
 
 		if nextIsStart {
@@ -167,34 +184,34 @@ func ParseFarm(filename string) (*Farm, error) {
 
 	// --- IO / process interruption error ---
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("ERROR: invalid data format, file read error: %v", err)
+		return nil, "", fmt.Errorf("ERROR: invalid data format, file read error: %v", err)
 	}
 
 	// --- Whitespace-only file ---
 	if !hasLines {
-		return nil, fmt.Errorf("ERROR: invalid data format, file contains no valid data")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, file contains no valid data")
 	}
 
 	// --- ##start or ##end with no room following ---
 	if nextIsStart {
-		return nil, fmt.Errorf("ERROR: invalid data format, ##start declared but no room followed")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, ##start declared but no room followed")
 	}
 	if nextIsEnd {
-		return nil, fmt.Errorf("ERROR: invalid data format, ##end declared but no room followed")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, ##end declared but no room followed")
 	}
 
 	// --- Missing start or end ---
 	if farm.StartRoom == "" {
-		return nil, fmt.Errorf("ERROR: invalid data format, no start room found")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, no start room found")
 	}
 	if farm.EndRoom == "" {
-		return nil, fmt.Errorf("ERROR: invalid data format, no end room found")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, no end room found")
 	}
 
 	// --- No tunnels at all ---
 	if len(farm.Tunnels) == 0 {
-		return nil, fmt.Errorf("ERROR: invalid data format, no tunnels found")
+		return nil, "", fmt.Errorf("ERROR: invalid data format, no tunnels found")
 	}
 
-	return farm, nil
+	return farm, fileContent, nil
 }

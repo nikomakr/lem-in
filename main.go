@@ -3,54 +3,34 @@ package main
 import (
 	"fmt"
 	"os"
-	"sort"
 )
 
 func main() {
+	// 1. Read filename from command line arguments
 	if len(os.Args) != 2 {
 		fmt.Println("Usage: go run . <filename>")
 		os.Exit(1)
 	}
 	filename := os.Args[1]
 
-	fileBytes, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Println("ERROR: invalid data format, could not read file")
-		os.Exit(1)
-	}
-	fileContent := string(fileBytes)
-
-	farm, err := ParseFarm(filename)
+	// 2. Parse the farm — file content is returned alongside the farm
+	farm, fileContent, err := ParseFarm(filename)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	// DEBUG: print adjacency list
-	fmt.Println("=== ADJACENCY LIST ===")
-	keys := []string{}
-	for k := range farm.Tunnels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Printf("  %s -> %v\n", k, farm.Tunnels[k])
-	}
-
+	// 3. Find optimal paths
 	paths := findPaths(farm)
 	if paths == nil {
 		fmt.Println("ERROR: invalid data format, no path found between start and end")
 		os.Exit(1)
 	}
 
-	// DEBUG: print all found paths
-	fmt.Println("=== PATHS FOUND ===")
-	for i, p := range paths {
-		fmt.Printf("  path %d: %v\n", i, p)
-	}
-
+	// 4. Assign ants to paths and simulate movement
 	assignments := assignAnts(paths, farm.Ants)
 	turns := simulate(paths, assignments)
 
+	// 5. Print output
 	printOutput(fileContent, turns)
 }

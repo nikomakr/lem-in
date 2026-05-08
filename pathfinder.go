@@ -5,104 +5,34 @@ import "sort"
 // findPaths uses Edmonds-Karp with node splitting to find
 // the optimal set of non-overlapping paths from start to end.
 func findPaths(farm *Farm) [][]string {
-	initial := buildCapacityGraph(farm)
-	capacity := cloneGraph(initial)
+	capacity := buildCapacityGraph(farm)
 
-	foundAny := false
+	rawPaths := [][]string{}
 	for {
 		path := bfsCapacity(farm.StartRoom+"_in", farm.EndRoom+"_out", capacity)
 		if path == nil {
 			break
 		}
-		foundAny = true
+		rawPaths = append(rawPaths, path)
+
 		for i := 0; i < len(path)-1; i++ {
-			capacity[path[i]][path[i+1]]--
-			capacity[path[i+1]][path[i]]++
+			from := path[i]
+			to := path[i+1]
+			capacity[from][to]--
+			capacity[to][from]++
 		}
 	}
-	if !foundAny {
+
+	if len(rawPaths) == 0 {
 		return nil
 	}
 
-	realPaths := decomposeFlow(initial, capacity, farm.StartRoom, farm.EndRoom)
-	if len(realPaths) == 0 {
-		return nil
+	realPaths := [][]string{}
+	for _, p := range rawPaths {
+		realPaths = append(realPaths, toRealPath(p))
 	}
+
 	return selectBestPaths(realPaths, farm.Ants)
-}
-
-// cloneGraph returns a deep copy of a capacity graph.
-func cloneGraph(g map[string]map[string]int) map[string]map[string]int {
-	clone := make(map[string]map[string]int, len(g))
-	for u, neighbors := range g {
-		clone[u] = make(map[string]int, len(neighbors))
-		for v, c := range neighbors {
-			clone[u][v] = c
-		}
-	}
-	return clone
-}
-
-// decomposeFlow extracts individual flow paths from the max-flow result.
-// flow(u→v) = initial[u][v] - final[u][v]; we DFS through edges with flow > 0.
-func decomposeFlow(initial, final map[string]map[string]int, startRoom, endRoom string) [][]string {
-	flowGraph := make(map[string]map[string]int)
-	for u, neighbors := range initial {
-		for v, initCap := range neighbors {
-			f := initCap - final[u][v]
-			if f > 0 {
-				if flowGraph[u] == nil {
-					flowGraph[u] = make(map[string]int)
-				}
-				flowGraph[u][v] = f
-			}
-		}
-	}
-
-	startNode := startRoom + "_in"
-	endNode := endRoom + "_out"
-	paths := [][]string{}
-
-	for {
-		path := bfsFlow(startNode, endNode, flowGraph)
-		if path == nil {
-			break
-		}
-		paths = append(paths, toRealPath(path))
-		for i := 0; i < len(path)-1; i++ {
-			flowGraph[path[i]][path[i+1]]--
-			if flowGraph[path[i]][path[i+1]] == 0 {
-				delete(flowGraph[path[i]], path[i+1])
-			}
-		}
-	}
-	return paths
-}
-
-// bfsFlow finds a path in the flow graph (only forward/flow edges).
-func bfsFlow(start, end string, flow map[string]map[string]int) []string {
-	parent := map[string]string{start: ""}
-	queue := []string{start}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		if current == end {
-			path := []string{}
-			for node := end; node != ""; node = parent[node] {
-				path = append([]string{node}, path...)
-			}
-			return path
-		}
-		for neighbor, f := range flow[current] {
-			if f > 0 {
-				if _, visited := parent[neighbor]; !visited {
-					parent[neighbor] = current
-					queue = append(queue, neighbor)
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // buildCapacityGraph builds a residual capacity graph using node splitting.
@@ -149,6 +79,8 @@ func buildCapacityGraph(farm *Farm) map[string]map[string]int {
 }
 
 // bfsCapacity finds the shortest augmenting path using parent tracking BFS.
+// Neighbours are sorted before exploration to ensure deterministic results
+// across runs, since Go map iteration order is randomised.
 func bfsCapacity(start, end string, capacity map[string]map[string]int) []string {
 	parent := map[string]string{start: ""}
 	queue := []string{start}
@@ -165,12 +97,19 @@ func bfsCapacity(start, end string, capacity map[string]map[string]int) []string
 			return path
 		}
 
+		// Sort neighbours for deterministic BFS order
+		neighbours := make([]string, 0, len(capacity[current]))
 		for neighbour, c := range capacity[current] {
 			if c > 0 {
-				if _, visited := parent[neighbour]; !visited {
-					parent[neighbour] = current
-					queue = append(queue, neighbour)
-				}
+				neighbours = append(neighbours, neighbour)
+			}
+		}
+		sort.Strings(neighbours)
+
+		for _, neighbour := range neighbours {
+			if _, visited := parent[neighbour]; !visited {
+				parent[neighbour] = current
+				queue = append(queue, neighbour)
 			}
 		}
 	}
@@ -178,41 +117,73 @@ func bfsCapacity(start, end string, capacity map[string]map[string]int) []string
 	return nil
 }
 
-// toRealPath reconstructs real room names from a flow-decomposition path.
-// Every room appears as X_in then X_out; we collect from _in nodes only.
+// toRealPath reconstructs real room names from a split-node path.
+// Collects _in nodes for forward traversal and appends the final
+// _out node only if not already present.
 func toRealPath(path []string) []string {
 	result := []string{}
+	seen := map[string]bool{}
+
 	for _, node := range path {
 		if len(node) > 3 && node[len(node)-3:] == "_in" {
-			result = append(result, node[:len(node)-3])
+			name := node[:len(node)-3]
+			if !seen[name] {
+				seen[name] = true
+				result = append(result, name)
+			}
 		}
 	}
+
+	last := path[len(path)-1]
+	if len(last) > 4 && last[len(last)-4:] == "_out" {
+		name := last[:len(last)-4]
+		if !seen[name] {
+			result = append(result, name)
+		}
+	}
+
 	return result
 }
 
-// calculateTurns returns the number of turns needed to move numAnts ants
-// through a given set of paths.
+// calculateTurns simulates greedy ant assignment across paths and returns
+// the actual number of turns needed to move all numAnts ants.
+// Each ant is assigned to whichever path finishes it soonest.
+// This correctly handles unequal path lengths unlike the simplified formula.
 func calculateTurns(paths [][]string, numAnts int) int {
 	if len(paths) == 0 {
 		return 0
 	}
-	longest := 0
-	for _, p := range paths {
-		steps := len(p) - 1
-		if steps > longest {
-			longest = steps
+
+	assigned := make([]int, len(paths))
+
+	for ant := 0; ant < numAnts; ant++ {
+		best := 0
+		bestFinish := (len(paths[0]) - 1) + assigned[0] + 1
+		for i := 1; i < len(paths); i++ {
+			finish := (len(paths[i]) - 1) + assigned[i] + 1
+			if finish < bestFinish {
+				bestFinish = finish
+				best = i
+			}
+		}
+		assigned[best]++
+	}
+
+	maxTurns := 0
+	for i, p := range paths {
+		if assigned[i] == 0 {
+			continue
+		}
+		finish := (len(p) - 1) + assigned[i]
+		if finish > maxTurns {
+			maxTurns = finish
 		}
 	}
-	return longest + (numAnts - len(paths))
+	return maxTurns
 }
 
 // selectBestPaths returns the subset of paths that minimises total turns.
-// Paths are sorted shortest-first before selection so prefix-comparison is valid.
 func selectBestPaths(allPaths [][]string, numAnts int) [][]string {
-	sort.Slice(allPaths, func(i, j int) bool {
-		return len(allPaths[i]) < len(allPaths[j])
-	})
-
 	bestTurns := -1
 	bestCount := 1
 
