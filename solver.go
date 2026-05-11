@@ -1,5 +1,7 @@
 package main
 
+import "sort"
+
 // Move represents a single ant movement in one turn.
 type Move struct {
 	AntID int
@@ -8,7 +10,7 @@ type Move struct {
 
 // assignAnts distributes ants across the given paths using greedy assignment.
 // Each ant is assigned to whichever path finishes it soonest.
-// This matches the greedy logic in calculateTurns in pathfinder.go.
+// Ties are broken by picking the path with fewest ants assigned.
 func assignAnts(paths [][]string, numAnts int) [][]int {
 	assignments := make([][]int, len(paths))
 	assigned := make([]int, len(paths))
@@ -19,7 +21,8 @@ func assignAnts(paths [][]string, numAnts int) [][]int {
 
 		for i := 1; i < len(paths); i++ {
 			finish := (len(paths[i]) - 1) + assigned[i] + 1
-			if finish < bestFinish {
+			if finish < bestFinish ||
+				(finish == bestFinish && assigned[i] < assigned[best]) {
 				bestFinish = finish
 				best = i
 			}
@@ -59,11 +62,12 @@ func simulate(paths [][]string, assignments [][]int) [][]Move {
 		}
 	}
 
-	// Collect all ant IDs in order for deterministic iteration
+	// Collect all ant IDs sorted numerically for deterministic iteration
 	allAnts := []int{}
 	for _, ants := range assignments {
 		allAnts = append(allAnts, ants...)
 	}
+	sort.Ints(allAnts)
 
 	turnIndex := 0
 	for {
@@ -81,7 +85,6 @@ func simulate(paths [][]string, assignments [][]int) [][]Move {
 				nextRoom := path[state.step+1]
 				isEnd := nextRoom == path[len(path)-1]
 
-				// Allow move if room is end (exempt) or not yet occupied
 				if isEnd || !occupied[nextRoom] {
 					if !isEnd {
 						occupied[nextRoom] = true

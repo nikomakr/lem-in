@@ -1,6 +1,6 @@
 # lem-in
 
-A Go program that solves an ant colony pathfinding problem. Parses a graph of rooms and tunnels, finds optimal non-overlapping paths using BFS-based max flow, and moves N ants from `##start` to `##end` in the fewest turns possible.
+A Go program that solves an ant colony pathfinding problem. Parses a graph of rooms and tunnels, finds optimal non-overlapping paths using DFS and exhaustive vertex-disjoint path selection, and moves N ants from `##start` to `##end` in the fewest turns possible.
 
 ---
 
@@ -15,6 +15,7 @@ A Go program that solves an ant colony pathfinding problem. Parses a graph of ro
 - [Examples](#examples)
 - [Error Handling](#error-handling)
 - [Testing](#testing)
+- [Constraints](#constraints)
 
 ---
 
@@ -31,40 +32,40 @@ Rules:
 
 ## Algorithm
 
-This project uses an **Edmonds-Karp / BFS-based Max Flow** approach rather than a simple shortest-path algorithm like Dijkstra. Here is why:
+### Path Finding — DFS + Exhaustive Vertex-Disjoint Selection
 
-### Why Not Dijkstra?
+The program uses a two-stage approach:
 
-Dijkstra finds a single shortest path between two nodes. For `lem-in`, that is not enough — we need to move **N ants simultaneously** across **multiple non-overlapping paths**, minimising the total number of turns. Dijkstra cannot model traffic, congestion, or concurrent ant movement.
+**Stage 1 — Find all simple paths (DFS)**
 
-### The Edmonds-Karp Approach
+A depth-first search finds every simple path from `##start` to `##end`. A simple path visits each room at most once. Neighbours are sorted alphabetically at each step for deterministic results.
 
-Edmonds-Karp is an implementation of the Ford-Fulkerson max flow algorithm that uses **BFS to find augmenting paths**. In the context of `lem-in`:
+**Stage 2 — Find the best vertex-disjoint set (exhaustive search)**
 
-1. **BFS** finds the shortest available path from `##start` to `##end`
-2. The path is recorded and its edges are **marked as used**
-3. BFS runs again on the remaining graph to find the next augmenting path
-4. This repeats until no more paths exist
-5. The resulting set of paths represents the **maximum flow** through the colony
+Two paths are vertex-disjoint if they share no intermediate rooms. The program tries every combination of vertex-disjoint paths and picks the set that minimises total turns for N ants.
 
-### Optimal Ant Distribution
+This approach guarantees correctness regardless of graph topology, including graphs with cross-edges that would confuse simpler algorithms.
 
-Not all discovered paths are always beneficial. A longer path may increase the total turns if the ant count does not justify using it. The solver evaluates each subset of paths and calculates the number of turns using:
+### Why Not Edmonds-Karp / Max Flow?
 
-```
-turns = longest_path_length + (N - number_of_paths)
-```
+An Edmonds-Karp BFS-based max flow approach was initially implemented but abandoned because BFS ordering caused incorrect path discovery when cross-edges existed between intended vertex-disjoint paths. The DFS exhaustive approach is correct in all cases.
 
-It selects the path set that **minimises total turns**, then distributes ants greedily across those paths.
+### Ant Distribution — Greedy Assignment
+
+Once the optimal path set is selected, ants are assigned greedily — each ant goes to whichever path would finish it soonest. This correctly handles unequal path lengths and minimises total turns.
+
+### Turn Simulation
+
+Each ant departs on turn equal to its position in the queue on its path (0-indexed). A room occupancy map enforces the one-ant-per-room rule each turn, with `##end` exempt per spec.
 
 ### Summary
 
 | Step | Method |
 |------|--------|
-| Find paths | BFS (Edmonds-Karp style) |
-| Select optimal paths | Turn calculation per subset |
-| Distribute ants | Greedy assignment |
-| Simulate movement | Turn-by-turn queue |
+| Find all paths | DFS (depth-first search) |
+| Select optimal paths | Exhaustive vertex-disjoint combination search |
+| Distribute ants | Greedy finish-time assignment |
+| Simulate movement | Turn-by-turn with occupancy enforcement |
 
 ---
 
@@ -72,17 +73,18 @@ It selects the path set that **minimises total turns**, then distributes ants gr
 
 ```
 lem-in/
-├── main.go            // Entry point
-├── graph.go           // Room and tunnel data structures ✅
-├── graph_test.go      // Unit tests for graph ✅
-├── parser.go          // Input parsing and validation ✅
-├── parser_test.go     // Unit tests for parser ✅
-├── pathfinder.go      // BFS + augmenting paths ✅
-├── pathfinder_test.go // Unit tests for pathfinder ✅
-├── solver.go          // Ant distribution and turn optimisation ✅
-├── solver_test.go     // Unit tests for solver ✅
-├── simulator.go       // Turn-by-turn movement output ✅
-└── simulator_test.go  // Unit tests for simulator ✅
+├── main.go              // Entry point ✅
+├── graph.go             // Room and tunnel data structures ✅
+├── graph_test.go        // Unit tests for graph ✅
+├── parser.go            // Input parsing and validation ✅
+├── parser_test.go       // Unit tests for parser ✅
+├── pathfinder.go        // DFS path finding and disjoint set selection ✅
+├── pathfinder_test.go   // Unit tests for pathfinder ✅
+├── solver.go            // Ant distribution and turn simulation ✅
+├── solver_test.go       // Unit tests for solver ✅
+├── simulator.go         // Turn-by-turn output formatting ✅
+├── simulator_test.go    // Unit tests for simulator ✅
+└── check_errors.sh      // Shell script to verify all error cases ✅
 ```
 
 ---
@@ -109,7 +111,7 @@ name1-name2
 - Room names must **not** start with `L` or `#` and must contain **no spaces**
 - Tunnels are defined as `name1-name2`
 - Lines beginning with `#` (but not `##start` or `##end`) are treated as comments
-- `##start` and `##end` are the only valid special commands
+- `##start` and `##end` are the only valid special commands — any other `##` command is ignored
 
 ---
 
@@ -137,47 +139,52 @@ Where `Lx-y` means ant number `x` moved to room `y`.
 $ go run . <input_file>
 ```
 
-Example:
+Or build first for faster execution:
 
 ```bash
-$ go run . example00.txt
+$ go build -o lem-in .
+$ ./lem-in <input_file>
 ```
 
 ---
 
 ## Examples
 
-> ⚠️ This section will be populated with verified outputs as examples are confirmed.
+### example00 — 4 ants, 6 turns
 
-### example00 — 4 ants, simple colony
-
-```
+```bash
 $ go run . example00.txt
-4
-##start
-0 0 3
-...
-L1-2
-L1-3 L2-2
-L1-1 L2-3 L3-2
-L2-1 L3-3 L4-2
-L3-1 L4-3
-L4-1
 ```
 
-Expected: **6 turns or fewer**
+### example01 — 10 ants, 8 turns
+
+```bash
+$ go run . example01.txt
+```
+
+### example02 — 20 ants, 11 turns
+
+```bash
+$ go run . example02.txt
+```
+
+### example06 — 100 ants, under 1.5 minutes
+
+```bash
+$ time go run . example06.txt
+```
+
+### example07 — 1000 ants, under 2.5 minutes
+
+```bash
+$ time go run . example07.txt
+```
 
 ---
 
 ## Error Handling
 
-The program returns a descriptive error to stdout for all invalid inputs:
-
-```
-ERROR: invalid data format
-```
-
-With specific messages for each case:
+The program returns a descriptive error for all invalid inputs:
 
 ```
 ERROR: invalid data format, invalid number of ants
@@ -197,6 +204,13 @@ ERROR: invalid data format, file is empty
 ERROR: invalid data format, path is a directory not a file
 ERROR: invalid data format, could not open file
 ERROR: invalid data format, file read error
+ERROR: invalid data format, no path found between start and end
+```
+
+To verify all error cases:
+
+```bash
+$ ./check_errors.sh
 ```
 
 ---
@@ -216,10 +230,12 @@ $ go test -v ./...
 | File | Tests | Status |
 |------|-------|--------|
 | `graph_test.go` | 8 | ✅ All passing |
-| `parser_test.go` | 20 | ✅ All passing |
+| `parser_test.go` | 21 | ✅ All passing |
 | `pathfinder_test.go` | 11 | ✅ All passing |
 | `solver_test.go` | 9 | ✅ All passing |
 | `simulator_test.go` | 8 | ✅ All passing |
+
+**Total: 57 tests, all passing.**
 
 ---
 

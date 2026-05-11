@@ -2,153 +2,114 @@ package main
 
 import "sort"
 
-// findPaths uses Edmonds-Karp with node splitting to find
-// the optimal set of non-overlapping paths from start to end.
+// findPaths finds the optimal set of vertex-disjoint paths from start to end
+// that minimises total turns for N ants.
+// It uses DFS to find all simple paths, then exhaustive search to find
+// the best vertex-disjoint combination.
 func findPaths(farm *Farm) [][]string {
-	capacity := buildCapacityGraph(farm)
+	allPaths := findAllSimplePaths(farm)
 
-	rawPaths := [][]string{}
-	for {
-		path := bfsCapacity(farm.StartRoom+"_in", farm.EndRoom+"_out", capacity)
-		if path == nil {
-			break
-		}
-		rawPaths = append(rawPaths, path)
-
-		for i := 0; i < len(path)-1; i++ {
-			from := path[i]
-			to := path[i+1]
-			capacity[from][to]--
-			capacity[to][from]++
-		}
-	}
-
-	if len(rawPaths) == 0 {
+	if len(allPaths) == 0 {
 		return nil
 	}
 
-	realPaths := [][]string{}
-	for _, p := range rawPaths {
-		realPaths = append(realPaths, toRealPath(p))
-	}
+	// Sort paths by length shortest first
+	sort.Slice(allPaths, func(i, j int) bool {
+		return len(allPaths[i]) < len(allPaths[j])
+	})
 
-	return selectBestPaths(realPaths, farm.Ants)
+	return findBestDisjointSet(allPaths, farm.Ants)
 }
 
-// buildCapacityGraph builds a residual capacity graph using node splitting.
-// Each room X becomes X_in and X_out with an internal edge.
-// Start and end get capacity equal to their tunnel count.
-// All other rooms get internal capacity 1.
-func buildCapacityGraph(farm *Farm) map[string]map[string]int {
-	cap := make(map[string]map[string]int)
+// findAllSimplePaths uses DFS to find every simple path from start to end.
+// A simple path visits each room at most once.
+func findAllSimplePaths(farm *Farm) [][]string {
+	result := [][]string{}
+	visited := map[string]bool{farm.StartRoom: true}
+	path := []string{farm.StartRoom}
 
-	ensure := func(node string) {
-		if cap[node] == nil {
-			cap[node] = make(map[string]int)
-		}
-	}
-
-	for room := range farm.Rooms {
-		in := room + "_in"
-		out := room + "_out"
-		ensure(in)
-		ensure(out)
-
-		if room == farm.StartRoom || room == farm.EndRoom {
-			cap[in][out] = len(farm.Tunnels[room])
-		} else {
-			cap[in][out] = 1
-		}
-		cap[out][in] = 0
-	}
-
-	for from, neighbours := range farm.Tunnels {
-		for _, to := range neighbours {
-			fromOut := from + "_out"
-			toIn := to + "_in"
-			ensure(fromOut)
-			ensure(toIn)
-			cap[fromOut][toIn] = 1
-			if _, exists := cap[toIn][fromOut]; !exists {
-				cap[toIn][fromOut] = 0
-			}
-		}
-	}
-
-	return cap
-}
-
-// bfsCapacity finds the shortest augmenting path using parent tracking BFS.
-// Neighbours are sorted before exploration to ensure deterministic results
-// across runs, since Go map iteration order is randomised.
-func bfsCapacity(start, end string, capacity map[string]map[string]int) []string {
-	parent := map[string]string{start: ""}
-	queue := []string{start}
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if current == end {
-			path := []string{}
-			for node := end; node != ""; node = parent[node] {
-				path = append([]string{node}, path...)
-			}
-			return path
+	var dfs func(current string)
+	dfs = func(current string) {
+		if current == farm.EndRoom {
+			p := make([]string, len(path))
+			copy(p, path)
+			result = append(result, p)
+			return
 		}
 
-		// Sort neighbours for deterministic BFS order
-		neighbours := make([]string, 0, len(capacity[current]))
-		for neighbour, c := range capacity[current] {
-			if c > 0 {
-				neighbours = append(neighbours, neighbour)
-			}
-		}
+		// Sort neighbours for deterministic order
+		neighbours := make([]string, len(farm.Tunnels[current]))
+		copy(neighbours, farm.Tunnels[current])
 		sort.Strings(neighbours)
 
-		for _, neighbour := range neighbours {
-			if _, visited := parent[neighbour]; !visited {
-				parent[neighbour] = current
-				queue = append(queue, neighbour)
+		for _, next := range neighbours {
+			if !visited[next] {
+				visited[next] = true
+				path = append(path, next)
+				dfs(next)
+				path = path[:len(path)-1]
+				visited[next] = false
 			}
 		}
 	}
 
-	return nil
+	dfs(farm.StartRoom)
+	return result
 }
 
-// toRealPath reconstructs real room names from a split-node path.
-// Collects _in nodes for forward traversal and appends the final
-// _out node only if not already present.
-func toRealPath(path []string) []string {
-	result := []string{}
-	seen := map[string]bool{}
+// findBestDisjointSet tries all combinations of vertex-disjoint paths
+// and returns the subset that minimises total turns for numAnts ants.
+// Two paths are vertex-disjoint if they share no intermediate rooms.
+func findBestDisjointSet(paths [][]string, numAnts int) [][]string {
+	bestTurns := -1
+	bestSet := [][]string{}
 
-	for _, node := range path {
-		if len(node) > 3 && node[len(node)-3:] == "_in" {
-			name := node[:len(node)-3]
-			if !seen[name] {
-				seen[name] = true
-				result = append(result, name)
+	var try func(index int, chosen [][]string, usedRooms map[string]bool)
+	try = func(index int, chosen [][]string, usedRooms map[string]bool) {
+		if len(chosen) > 0 {
+			turns := calculateTurns(chosen, numAnts)
+			if bestTurns == -1 || turns < bestTurns {
+				bestTurns = turns
+				bestSet = make([][]string, len(chosen))
+				copy(bestSet, chosen)
+			}
+		}
+
+		for i := index; i < len(paths); i++ {
+			path := paths[i]
+
+			// Skip if this path shares any intermediate room with chosen paths
+			conflict := false
+			for _, room := range path[1 : len(path)-1] {
+				if usedRooms[room] {
+					conflict = true
+					break
+				}
+			}
+			if conflict {
+				continue
+			}
+
+			// Mark intermediate rooms as used
+			for _, room := range path[1 : len(path)-1] {
+				usedRooms[room] = true
+			}
+
+			try(i+1, append(chosen, path), usedRooms)
+
+			// Unmark intermediate rooms
+			for _, room := range path[1 : len(path)-1] {
+				delete(usedRooms, room)
 			}
 		}
 	}
 
-	last := path[len(path)-1]
-	if len(last) > 4 && last[len(last)-4:] == "_out" {
-		name := last[:len(last)-4]
-		if !seen[name] {
-			result = append(result, name)
-		}
-	}
-
-	return result
+	try(0, [][]string{}, map[string]bool{})
+	return bestSet
 }
 
 // calculateTurns simulates greedy ant assignment across paths and returns
 // the actual number of turns needed to move all numAnts ants.
-// Each ant is assigned to whichever path finishes it soonest.
-// This correctly handles unequal path lengths unlike the simplified formula.
 func calculateTurns(paths [][]string, numAnts int) int {
 	if len(paths) == 0 {
 		return 0
